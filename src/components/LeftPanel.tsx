@@ -24,12 +24,14 @@ import {
   Edit3,
   Tag,
   SlidersHorizontal,
+  Copy,
 } from 'lucide-react';
 import { Timetable, ThemeConfig, TimeSlotConfig, DayConfig } from '../types';
 import { PRESET_THEMES } from '../data/presets';
 import { COMMON_ICONS, IconRenderer } from './IconRenderer';
 import { HeaderInfoModal } from './HeaderInfoModal';
 import { EditSessionModal } from './EditSessionModal';
+import { getNextDay } from '../utils/timetableOperations';
 
 interface LeftPanelProps {
   timetable: Timetable;
@@ -48,6 +50,7 @@ interface LeftPanelProps {
   onMoveRow?: (slotId: string, direction: 'up' | 'down') => void;
   onCloseMobileDrawer?: () => void;
   onCollapse?: () => void;
+  onOpenCopyDay?: (dayId: string) => void;
 }
 
 export const LeftPanel: React.FC<LeftPanelProps> = ({
@@ -59,6 +62,7 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
   onMoveRow,
   onCloseMobileDrawer,
   onCollapse,
+  onOpenCopyDay,
 }) => {
   const [activeTab, setActiveTab] = useState<'elements' | 'themes' | 'icons' | 'structure' | 'branding'>('elements');
 
@@ -754,6 +758,20 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({
                       />
                     </div>
                     <div className="flex items-center gap-0.5 shrink-0">
+                      {onOpenCopyDay && (() => {
+                        const nextDay = getNextDay(timetable.days, day.id);
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => onOpenCopyDay(day.id)}
+                            title={`Copy ${day.name}'s timetable to next day (${nextDay?.name || 'next day'})`}
+                            aria-label={`Copy ${day.name} to next day`}
+                            className="text-[#888888] hover:text-[#c5a059] hover:bg-[#c5a059]/15 p-1 rounded-md transition-colors cursor-pointer"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                          </button>
+                        );
+                      })()}
                       <button
                         onClick={() => handleMoveDay(day.id, 'up')}
                         disabled={idx === 0}

@@ -20,7 +20,9 @@ import { ShareModal } from './components/ShareModal';
 import { AiAssistantModal } from './components/AiAssistantModal';
 import { QuickEditModal } from './components/QuickEditModal';
 import { PrintModal } from './components/PrintModal';
+import { CopyDayModal } from './components/CopyDayModal';
 import { ExportTimetableTarget } from './components/ExportTimetableTarget';
+import { copyDayTimetable } from './utils/timetableOperations';
 import {
   Palette,
   SlidersHorizontal,
@@ -92,6 +94,8 @@ export default function App() {
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+  const [isCopyDayModalOpen, setIsCopyDayModalOpen] = useState(false);
+  const [copyDaySourceId, setCopyDaySourceId] = useState<string | undefined>(undefined);
   const [quickEditEntry, setQuickEditEntry] = useState<TimetableEntry | null>(null);
 
   // Check for ?print=true parameter when opened in a dedicated browser tab
@@ -262,6 +266,40 @@ export default function App() {
       lastEdited: new Date().toISOString(),
     });
   };
+
+  // Copy single day timetable to next day
+  const handleOpenCopyDayModal = useCallback(
+    (sourceDayId?: string) => {
+      setCopyDaySourceId(sourceDayId || activeTimetable.days[0]?.id);
+      setIsCopyDayModalOpen(true);
+    },
+    [activeTimetable.days]
+  );
+
+  const handleConfirmCopyDay = useCallback(
+    (sourceDayId: string, targetDayId: string, mode: 'replace' | 'merge') => {
+      const sourceDay = activeTimetable.days.find((d) => d.id === sourceDayId);
+      const targetDay = activeTimetable.days.find((d) => d.id === targetDayId);
+
+      const { updatedTimetable, copiedCount } = copyDayTimetable(activeTimetable, {
+        sourceDayId,
+        targetDayId,
+        mode,
+      });
+
+      handleUpdateActiveTimetable(updatedTimetable);
+
+      const srcName = sourceDay?.name || 'day';
+      const tgtName = targetDay?.name || 'next day';
+      setDownloadToast(
+        `✓ Copied ${srcName} timetable to ${tgtName} (${copiedCount} ${
+          copiedCount === 1 ? 'session' : 'sessions'
+        } copied)`
+      );
+      setTimeout(() => setDownloadToast(null), 3500);
+    },
+    [activeTimetable, handleUpdateActiveTimetable]
+  );
 
   // Add subject element to selected cell or first empty slot
   const handleAddSubjectFromPanel = (subject: {
@@ -564,6 +602,7 @@ export default function App() {
             onToggleLeftPanel={() => setIsLeftPanelCollapsed((v) => !v)}
             isRightPanelCollapsed={isRightPanelCollapsed}
             onToggleRightPanel={() => setIsRightPanelCollapsed((v) => !v)}
+            onOpenCopyDay={() => handleOpenCopyDayModal()}
           />
 
           {/* 3-Panel Design Studio Workspace (Responsive: Sidebars on desktop, Bottom Dock + Drawers on mobile) */}
@@ -579,6 +618,7 @@ export default function App() {
                   onAddBreak={handleAddBreak}
                   onMoveRow={handleMoveRow}
                   onCollapse={() => setIsLeftPanelCollapsed(true)}
+                  onOpenCopyDay={handleOpenCopyDayModal}
                 />
               ) : (
                 <div className="w-12 bg-[#121212] border-r border-[#262626] flex flex-col items-center py-3 gap-3 shrink-0 h-full select-none">
@@ -635,6 +675,7 @@ export default function App() {
                 onDeleteRow={handleDeleteRow}
                 onAddRow={handleAddRow}
                 onMoveRow={handleMoveRow}
+                onOpenCopyDay={handleOpenCopyDayModal}
               />
             </div>
 
@@ -762,6 +803,10 @@ export default function App() {
                   onAddBreak={handleAddBreak}
                   onMoveRow={handleMoveRow}
                   onCloseMobileDrawer={() => setMobileDrawer('none')}
+                  onOpenCopyDay={(dayId) => {
+                    setMobileDrawer('none');
+                    handleOpenCopyDayModal(dayId);
+                  }}
                 />
               </div>
             </div>
@@ -875,6 +920,14 @@ export default function App() {
             lastEdited: new Date().toISOString(),
           });
         }}
+      />
+
+      <CopyDayModal
+        isOpen={isCopyDayModalOpen}
+        onClose={() => setIsCopyDayModalOpen(false)}
+        timetable={activeTimetable}
+        initialSourceDayId={copyDaySourceId}
+        onConfirmCopy={handleConfirmCopyDay}
       />
 
       {/* Floating Download Notification Toast */}

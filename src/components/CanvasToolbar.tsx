@@ -13,6 +13,7 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  Copy,
 } from 'lucide-react';
 import { LayoutMode } from '../types';
 
@@ -31,6 +32,7 @@ interface CanvasToolbarProps {
   onToggleLeftPanel?: () => void;
   isRightPanelCollapsed?: boolean;
   onToggleRightPanel?: () => void;
+  onOpenCopyDay?: () => void;
 }
 
 export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
@@ -48,6 +50,7 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
   onToggleLeftPanel,
   isRightPanelCollapsed = false,
   onToggleRightPanel,
+  onOpenCopyDay,
 }) => {
   return (
     <div
@@ -147,6 +150,20 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
 
       {/* Middle & Right: Actions, Zoom & Inspector Toggle */}
       <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+        {/* Copy Day */}
+        {onOpenCopyDay && (
+          <button
+            onClick={onOpenCopyDay}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-[#a3a3a3] hover:text-[#c5a059] font-medium hover:bg-[#1a1a1a] rounded-lg transition-colors min-h-[32px] cursor-pointer"
+            title="Copy day schedule to next day"
+            aria-label="Copy day schedule to next day"
+            id="toolbar-copy-day-btn"
+          >
+            <Copy className="w-3.5 h-3.5 text-[#c5a059]" />
+            <span className="hidden sm:inline">Copy Day</span>
+          </button>
+        )}
+
         {/* Select All */}
         <button
           onClick={onSelectAll}

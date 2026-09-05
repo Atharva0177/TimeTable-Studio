@@ -21,6 +21,7 @@ import { Timetable, LayoutMode, DeviceView, ConflictIssue, TimetableEntry, TimeS
 import { IconRenderer } from './IconRenderer';
 import { HeaderInfoModal } from './HeaderInfoModal';
 import { EditSessionModal } from './EditSessionModal';
+import { getNextDay } from '../utils/timetableOperations';
 
 interface TimetableCanvasProps {
   timetable: Timetable;
@@ -36,6 +37,7 @@ interface TimetableCanvasProps {
   onDeleteRow?: (slotId: string) => void;
   onAddRow?: () => void;
   onMoveRow?: (slotId: string, direction: 'up' | 'down') => void;
+  onOpenCopyDay?: (dayId: string) => void;
 }
 
 export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
@@ -52,6 +54,7 @@ export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
   onDeleteRow,
   onAddRow,
   onMoveRow,
+  onOpenCopyDay,
 }) => {
   const [draggedEntryId, setDraggedEntryId] = useState<string | null>(null);
   const [dragOverCell, setDragOverCell] = useState<{ dayId: string; slotId: string } | null>(null);
@@ -526,21 +529,42 @@ export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
                     </th>
 
                     {/* Day Headers */}
-                    {timetable.days.map((day, idx) => (
-                      <th
-                        key={day.id}
-                        className={`p-3 text-center text-xs font-serif font-bold uppercase tracking-wider border border-[#262626] ${
-                          idx === timetable.days.length - 1 ? 'rounded-tr-xl' : ''
-                        }`}
-                        style={{
-                          backgroundColor: timetable.theme.headerBackground || '#171717',
-                          color: timetable.theme.headerTextColor || '#c5a059',
-                          minWidth: `${timetable.theme.cellWidth}px`,
-                        }}
-                      >
-                        <div>{day.name}</div>
-                      </th>
-                    ))}
+                    {timetable.days.map((day, idx) => {
+                      const nextDay = getNextDay(timetable.days, day.id);
+                      return (
+                        <th
+                          key={day.id}
+                          className={`p-2.5 sm:p-3 text-center text-xs font-serif font-bold uppercase tracking-wider border border-[#262626] group/dayth ${
+                            idx === timetable.days.length - 1 ? 'rounded-tr-xl' : ''
+                          }`}
+                          style={{
+                            backgroundColor: timetable.theme.headerBackground || '#171717',
+                            color: timetable.theme.headerTextColor || '#c5a059',
+                            minWidth: `${timetable.theme.cellWidth}px`,
+                          }}
+                        >
+                          <div className="flex flex-col items-center gap-1.5">
+                            <span className="leading-snug">{day.name}</span>
+                            {onOpenCopyDay && nextDay && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onOpenCopyDay(day.id);
+                                }}
+                                className="no-print inline-flex items-center gap-1 text-[10px] normal-case font-sans font-medium px-2 py-0.5 rounded-md bg-[#1e1e1e] hover:bg-[#282828] text-[#888888] hover:text-[#c5a059] border border-[#333333] hover:border-[#c5a059]/40 transition-colors shadow-2xs cursor-pointer"
+                                title={`Copy ${day.name} timetable to next day (${nextDay.name})`}
+                                aria-label={`Copy ${day.name} to next day`}
+                              >
+                                <Copy className="w-2.5 h-2.5 text-[#c5a059]" />
+                                <span className="hidden sm:inline">Copy to Next Day</span>
+                                <span className="sm:hidden">Copy</span>
+                              </button>
+                            )}
+                          </div>
+                        </th>
+                      );
+                    })}
                   </tr>
                 </thead>
 
@@ -806,20 +830,41 @@ export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
           {layoutMode === 'daily' && (
             <div className="space-y-4">
               {/* Day Selector Pills */}
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-2 border-b border-[#262626]">
-                {timetable.days.map((day) => (
-                  <button
-                    key={day.id}
-                    onClick={() => setActiveDailyDayId(day.id)}
-                    className={`px-4 py-2 rounded-xl text-xs font-serif font-bold transition-all whitespace-nowrap ${
-                      activeDailyDayId === day.id
-                        ? 'bg-[#c5a059] text-[#0a0a0a] shadow-xs'
-                        : 'bg-[#181818] text-[#a3a3a3] hover:bg-[#222222] hover:text-[#ededed] border border-[#262626]'
-                    }`}
-                  >
-                    {day.name}
-                  </button>
-                ))}
+              <div className="flex items-center justify-between gap-2 overflow-x-auto pb-2 border-b border-[#262626]">
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {timetable.days.map((day) => (
+                    <button
+                      key={day.id}
+                      onClick={() => setActiveDailyDayId(day.id)}
+                      className={`px-4 py-2 rounded-xl text-xs font-serif font-bold transition-all whitespace-nowrap ${
+                        activeDailyDayId === day.id
+                          ? 'bg-[#c5a059] text-[#0a0a0a] shadow-xs'
+                          : 'bg-[#181818] text-[#a3a3a3] hover:bg-[#222222] hover:text-[#ededed] border border-[#262626]'
+                      }`}
+                    >
+                      {day.name}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Option to copy current day to next day in Daily View */}
+                {onOpenCopyDay && (() => {
+                  const currentDay = timetable.days.find((d) => d.id === activeDailyDayId);
+                  const nextDay = currentDay ? getNextDay(timetable.days, currentDay.id) : null;
+                  if (!currentDay || !nextDay) return null;
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => onOpenCopyDay(activeDailyDayId)}
+                      className="no-print inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#1e1e1e] hover:bg-[#282828] text-[#c5a059] border border-[#c5a059]/30 hover:border-[#c5a059] text-xs font-semibold transition-all shadow-xs cursor-pointer shrink-0 ml-auto"
+                      title={`Copy ${currentDay.name} timetable to next day (${nextDay.name})`}
+                      aria-label={`Copy ${currentDay.name} timetable to next day`}
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>Copy to Next Day ({nextDay.name})</span>
+                    </button>
+                  );
+                })()}
               </div>
 
               {/* Day Chronological Flow */}
@@ -1006,9 +1051,27 @@ export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
                   >
                     <h3 className="font-serif font-bold text-base text-[#f5f5f5] mb-3 flex items-center justify-between">
                       <span>{day.name}</span>
-                      <span className="text-xs font-semibold text-[#888888]">
-                        {dayEntries.length} Activities
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold text-[#888888]">
+                          {dayEntries.length} Activities
+                        </span>
+                        {onOpenCopyDay && (() => {
+                          const nextDay = getNextDay(timetable.days, day.id);
+                          if (!nextDay) return null;
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => onOpenCopyDay(day.id)}
+                              className="no-print inline-flex items-center gap-1 text-[11px] font-sans font-medium px-2 py-0.5 rounded-md bg-[#1e1e1e] hover:bg-[#282828] text-[#a3a3a3] hover:text-[#c5a059] border border-[#333333] hover:border-[#c5a059]/40 transition-colors cursor-pointer"
+                              title={`Copy ${day.name} timetable to next day (${nextDay.name})`}
+                              aria-label={`Copy ${day.name} timetable to next day`}
+                            >
+                              <Copy className="w-3 h-3 text-[#c5a059]" />
+                              <span>Copy to Next Day</span>
+                            </button>
+                          );
+                        })()}
+                      </div>
                     </h3>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
