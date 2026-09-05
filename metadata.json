@@ -1,0 +1,6 @@
+{
+  "name": "Timetable Studio",
+  "description": "A custom timetable builder, visual editor, and intelligent generator with drag-and-drop customization, multi-layout views, conflict detection, and export capabilities.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
