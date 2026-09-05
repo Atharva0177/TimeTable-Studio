@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Sliders,
   Type,
@@ -20,9 +20,11 @@ import {
   ChevronUp,
   ChevronDown,
   ChevronRight,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { Timetable, TimetableEntry, CellStyle } from '../types';
 import { COMMON_ICONS, IconRenderer } from './IconRenderer';
+import { swapTwoEntries } from '../utils/timetableOperations';
 
 interface PropertiesPanelProps {
   timetable: Timetable;
@@ -52,6 +54,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   // Find selected entries
   const selectedEntries = timetable.entries.filter((e) => selectedCellIds.includes(e.id));
   const primarySelected = selectedEntries[0];
+  const [exchangeTargetId, setExchangeTargetId] = useState<string>('');
 
   const handleUpdatePrimaryEntry = (patch: Partial<TimetableEntry>) => {
     if (!primarySelected) return;
@@ -169,6 +172,87 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
                 Delete
               </button>
             </div>
+
+            {/* Exchange / Swap Position Section */}
+            {selectedEntries.length === 2 && (
+              <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-500/10 space-y-2 animate-in fade-in">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                    <ArrowLeftRight className="w-3.5 h-3.5 text-amber-400" />
+                    Exchange / Swap 2 Selected
+                  </span>
+                </div>
+                <p className="text-[11px] text-amber-200/90 leading-tight">
+                  Swap positions of <strong>"{selectedEntries[0].title}"</strong> and <strong>"{selectedEntries[1].title}"</strong>.
+                </p>
+                <button
+                  onClick={() => {
+                    const swapped = swapTwoEntries(timetable, selectedEntries[0].id, selectedEntries[1].id);
+                    onUpdateTimetable(swapped);
+                  }}
+                  className="w-full py-1.5 px-3 rounded-lg bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+                  id="inspector-swap-selected-btn"
+                >
+                  <ArrowLeftRight className="w-3.5 h-3.5" />
+                  Swap Positions Now
+                </button>
+              </div>
+            )}
+
+            {selectedEntries.length === 1 && (
+              <div className="p-3 rounded-xl border border-[#2a2a2a] bg-[#181818] space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-[#c5a059] uppercase tracking-wider flex items-center gap-1.5">
+                    <ArrowLeftRight className="w-3.5 h-3.5 text-[#c5a059]" />
+                    Exchange Subject Position
+                  </span>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[11px] text-[#888888] block">
+                    Swap "{primarySelected.title}" with:
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={exchangeTargetId}
+                      onChange={(e) => setExchangeTargetId(e.target.value)}
+                      className="flex-1 min-w-0 bg-[#121212] border border-[#2e2e2e] text-xs text-[#ededed] rounded-lg px-2.5 py-1.5 outline-none focus:border-[#c5a059]"
+                      aria-label="Select subject to exchange with"
+                    >
+                      <option value="">Choose another subject...</option>
+                      {timetable.entries
+                        .filter((e) => e.id !== primarySelected.id)
+                        .map((e) => {
+                          const dayName = timetable.days.find((d) => d.id === e.dayId)?.name || e.dayId;
+                          const slotName = timetable.timeSlots.find((s) => s.id === e.slotId)?.name || e.slotId;
+                          return (
+                            <option key={e.id} value={e.id}>
+                              {e.title} ({dayName} · {slotName})
+                            </option>
+                          );
+                        })}
+                    </select>
+                    <button
+                      disabled={!exchangeTargetId}
+                      onClick={() => {
+                        if (!exchangeTargetId) return;
+                        const targetEntry = timetable.entries.find((e) => e.id === exchangeTargetId);
+                        const swapped = swapTwoEntries(timetable, primarySelected.id, exchangeTargetId);
+                        onUpdateTimetable(swapped);
+                        onSelectCells([primarySelected.id, exchangeTargetId]);
+                        setExchangeTargetId('');
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-[#c5a059] hover:bg-[#d4af37] disabled:opacity-30 disabled:cursor-not-allowed text-black font-bold text-xs transition-colors shrink-0 cursor-pointer"
+                      title="Swap positions with selected subject"
+                    >
+                      Swap
+                    </button>
+                  </div>
+                </div>
+                <p className="text-[10px] text-[#737373] leading-tight">
+                  You can also drag this subject card directly over another subject on the timetable grid to exchange them.
+                </p>
+              </div>
+            )}
 
             {/* Row / Period Reorder & Manage */}
             {primarySelected && (

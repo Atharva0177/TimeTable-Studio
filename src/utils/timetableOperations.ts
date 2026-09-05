@@ -90,3 +90,97 @@ export function getNextDay<T extends { id: string; name: string }>(
   const nextIndex = (currentIndex + 1) % days.length;
   return days[nextIndex];
 }
+
+export interface SwapEntriesResult {
+  updatedTimetable: Timetable;
+  action: 'swapped' | 'moved' | 'none';
+  sourceEntry: TimetableEntry;
+  targetEntry?: TimetableEntry;
+}
+
+/**
+ * Directly swaps positions between two timetable entries by their IDs.
+ */
+export function swapTwoEntries(
+  timetable: Timetable,
+  entryIdA: string,
+  entryIdB: string
+): SwapEntriesResult {
+  const entryA = timetable.entries.find((e) => e.id === entryIdA);
+  const entryB = timetable.entries.find((e) => e.id === entryIdB);
+  if (!entryA || !entryB || entryIdA === entryIdB) {
+    return { updatedTimetable: timetable, action: 'none', sourceEntry: entryA || (undefined as any) };
+  }
+
+  const dayA = entryA.dayId;
+  const slotA = entryA.slotId;
+  const dayB = entryB.dayId;
+  const slotB = entryB.slotId;
+
+  const otherEntries = timetable.entries.filter((e) => e.id !== entryIdA && e.id !== entryIdB);
+  const updatedA: TimetableEntry = { ...entryA, dayId: dayB, slotId: slotB };
+  const updatedB: TimetableEntry = { ...entryB, dayId: dayA, slotId: slotA };
+
+  const cleanEntries = deduplicateCellEntries([...otherEntries, updatedA, updatedB]);
+  return {
+    updatedTimetable: {
+      ...timetable,
+      entries: cleanEntries,
+      lastEdited: new Date().toISOString(),
+    },
+    action: 'swapped',
+    sourceEntry: updatedA,
+    targetEntry: updatedB,
+  };
+}
+
+/**
+ * Moves an existing entry to a new slot, or exchanges (swaps) positions with the entry occupying the target slot.
+ */
+export function moveOrSwapEntry(
+  timetable: Timetable,
+  sourceEntryId: string,
+  targetDayId: string,
+  targetSlotId: string
+): SwapEntriesResult {
+  const sourceEntry = timetable.entries.find((e) => e.id === sourceEntryId);
+  if (!sourceEntry) {
+    return { updatedTimetable: timetable, action: 'none', sourceEntry: undefined as any };
+  }
+
+  // If dropped on the exact same cell, do nothing
+  if (sourceEntry.dayId === targetDayId && sourceEntry.slotId === targetSlotId) {
+    return { updatedTimetable: timetable, action: 'none', sourceEntry };
+  }
+
+  // Find target cell's entry (if any)
+  const targetEntries = timetable.entries.filter(
+    (e) => e.dayId === targetDayId && e.slotId === targetSlotId && e.id !== sourceEntryId
+  );
+  const targetEntry = targetEntries.length > 0 ? targetEntries[targetEntries.length - 1] : undefined;
+
+  if (targetEntry) {
+    // Both cells have an entry -> Exchange / Swap them!
+    return swapTwoEntries(timetable, sourceEntry.id, targetEntry.id);
+  } else {
+    // Target cell is empty -> Move source entry to target cell
+    const otherEntries = timetable.entries.filter(
+      (e) => e.id !== sourceEntry.id && !(e.dayId === targetDayId && e.slotId === targetSlotId)
+    );
+    const updatedSource: TimetableEntry = {
+      ...sourceEntry,
+      dayId: targetDayId,
+      slotId: targetSlotId,
+    };
+    const cleanEntries = deduplicateCellEntries([...otherEntries, updatedSource]);
+    return {
+      updatedTimetable: {
+        ...timetable,
+        entries: cleanEntries,
+        lastEdited: new Date().toISOString(),
+      },
+      action: 'moved',
+      sourceEntry: updatedSource,
+    };
+  }
+}

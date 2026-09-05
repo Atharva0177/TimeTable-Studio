@@ -14,6 +14,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Copy,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { LayoutMode } from '../types';
 
@@ -33,6 +34,7 @@ interface CanvasToolbarProps {
   isRightPanelCollapsed?: boolean;
   onToggleRightPanel?: () => void;
   onOpenCopyDay?: () => void;
+  onSwapSelected?: () => void;
 }
 
 export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
@@ -51,6 +53,7 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
   isRightPanelCollapsed = false,
   onToggleRightPanel,
   onOpenCopyDay,
+  onSwapSelected,
 }) => {
   return (
     <div
@@ -161,6 +164,20 @@ export const CanvasToolbar: React.FC<CanvasToolbarProps> = ({
           >
             <Copy className="w-3.5 h-3.5 text-[#c5a059]" />
             <span className="hidden sm:inline">Copy Day</span>
+          </button>
+        )}
+
+        {/* Swap 2 Selected */}
+        {onSwapSelected && (
+          <button
+            onClick={onSwapSelected}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 hover:text-amber-200 border border-amber-500/30 rounded-lg font-medium transition-all min-h-[32px] cursor-pointer animate-in fade-in"
+            title="Exchange / Swap the 2 selected subjects"
+            aria-label="Exchange the 2 selected subjects"
+            id="toolbar-swap-selected-btn"
+          >
+            <ArrowLeftRight className="w-3.5 h-3.5 text-amber-400" />
+            <span className="font-semibold text-xs">Swap (2 Selected)</span>
           </button>
         )}
 

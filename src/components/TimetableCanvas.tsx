@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import {
   Clock,
   MapPin,
@@ -16,12 +16,13 @@ import {
   ChevronRight,
   ChevronUp,
   ChevronDown,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { Timetable, LayoutMode, DeviceView, ConflictIssue, TimetableEntry, TimeSlotConfig } from '../types';
 import { IconRenderer } from './IconRenderer';
 import { HeaderInfoModal } from './HeaderInfoModal';
 import { EditSessionModal } from './EditSessionModal';
-import { getNextDay } from '../utils/timetableOperations';
+import { getNextDay, moveOrSwapEntry } from '../utils/timetableOperations';
 
 interface TimetableCanvasProps {
   timetable: Timetable;
@@ -38,6 +39,7 @@ interface TimetableCanvasProps {
   onAddRow?: () => void;
   onMoveRow?: (slotId: string, direction: 'up' | 'down') => void;
   onOpenCopyDay?: (dayId: string) => void;
+  onShowToast?: (msg: string) => void;
 }
 
 export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
@@ -55,10 +57,17 @@ export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
   onAddRow,
   onMoveRow,
   onOpenCopyDay,
+  onShowToast,
 }) => {
   const [draggedEntryId, setDraggedEntryId] = useState<string | null>(null);
+  const draggedEntryIdRef = useRef<string | null>(null);
   const [dragOverCell, setDragOverCell] = useState<{ dayId: string; slotId: string } | null>(null);
   const [activeDailyDayId, setActiveDailyDayId] = useState<string>(timetable.days[0]?.id || 'mon');
+
+  const draggedEntry = useMemo(
+    () => (draggedEntryId ? timetable.entries.find((e) => e.id === draggedEntryId) : null),
+    [timetable.entries, draggedEntryId]
+  );
 
   // Header & Session Edit Modal states
   const [isHeaderModalOpen, setIsHeaderModalOpen] = useState(false);
@@ -151,20 +160,37 @@ export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
 
   // Drag & Drop handlers
   const handleDragStart = (e: React.DragEvent, entryId: string) => {
-    e.dataTransfer.setData('text/plain', entryId);
-    e.dataTransfer.effectAllowed = 'move';
+    draggedEntryIdRef.current = entryId;
     setDraggedEntryId(entryId);
+    (window as any).__AIS_ACTIVE_DRAGGED_ENTRY__ = entryId;
+    e.dataTransfer.setData('text/plain', entryId);
+    e.dataTransfer.setData('application/x-entry-id', entryId);
+    e.dataTransfer.effectAllowed = 'copyMove';
+  };
+
+  const handleDragEnd = () => {
+    setTimeout(() => {
+      draggedEntryIdRef.current = null;
+      setDraggedEntryId(null);
+      setDragOverCell(null);
+      (window as any).__AIS_ACTIVE_DRAGGED_ENTRY__ = null;
+    }, 60);
   };
 
   const handleDragOver = (e: React.DragEvent, dayId: string, slotId: string) => {
     e.preventDefault();
-    e.dataTransfer.dropEffect = 'copy';
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
     if (!dragOverCell || dragOverCell.dayId !== dayId || dragOverCell.slotId !== slotId) {
       setDragOverCell({ dayId, slotId });
     }
   };
 
   const handleDragLeave = (e: React.DragEvent, dayId: string, slotId: string) => {
+    const related = e.relatedTarget as Node | null;
+    if (related && (e.currentTarget as Node)?.contains(related)) {
+      return;
+    }
     if (dragOverCell && dragOverCell.dayId === dayId && dragOverCell.slotId === slotId) {
       setDragOverCell(null);
     }
@@ -172,6 +198,7 @@ export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
 
   const handleDrop = (e: React.DragEvent, targetDayId: string, targetSlotId: string) => {
     e.preventDefault();
+    e.stopPropagation();
     setDragOverCell(null);
 
     // 1. Check for new subject dropped from left panel (Quick Subjects, Custom Card, Breaks)
@@ -193,7 +220,6 @@ export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
             category: payload.subject.category,
           };
 
-          // "only the latest selected should be shown"
           // Replace any existing entry at this cell
           const remaining = timetable.entries.filter(
             (entry) => !(entry.dayId === targetDayId && entry.slotId === targetSlotId)
@@ -205,6 +231,9 @@ export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
             lastEdited: new Date().toISOString(),
           });
           onSelectCells([newEntry.id]);
+          if (onShowToast) {
+            onShowToast(`Added "${newEntry.title}" to timetable`);
+          }
           return;
         }
 
@@ -229,6 +258,9 @@ export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
             lastEdited: new Date().toISOString(),
           });
           onSelectCells([newBreakEntry.id]);
+          if (onShowToast) {
+            onShowToast(`Added "${newBreakEntry.title}" to timetable`);
+          }
           return;
         }
       } catch (err) {
@@ -236,34 +268,34 @@ export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
       }
     }
 
-    // 2. Check for existing entry moved inside the canvas
-    const entryId = e.dataTransfer.getData('text/plain') || draggedEntryId;
+    // 2. Check for existing entry moved or exchanged inside the canvas
+    const entryId =
+      draggedEntryIdRef.current ||
+      draggedEntryId ||
+      (window as any).__AIS_ACTIVE_DRAGGED_ENTRY__ ||
+      e.dataTransfer.getData('application/x-entry-id') ||
+      e.dataTransfer.getData('text/plain');
+
     if (!entryId) return;
 
-    const sourceEntry = timetable.entries.find((entry) => entry.id === entryId);
-    if (!sourceEntry) return;
+    const result = moveOrSwapEntry(timetable, entryId, targetDayId, targetSlotId);
+    if (result.action === 'swapped' && result.targetEntry) {
+      onUpdateTimetable(result.updatedTimetable);
+      onSelectCells([result.sourceEntry.id, result.targetEntry.id]);
+      if (onShowToast) {
+        onShowToast(`⇄ Exchanged "${result.sourceEntry.title}" with "${result.targetEntry.title}"`);
+      }
+    } else if (result.action === 'moved') {
+      onUpdateTimetable(result.updatedTimetable);
+      onSelectCells([result.sourceEntry.id]);
+      if (onShowToast) {
+        onShowToast(`Moved "${result.sourceEntry.title}"`);
+      }
+    }
 
-    // Moving existing entry to target cell:
-    // Filter out target cell's previous entry so only the latest placed subject is shown!
-    const remainingEntries = timetable.entries.filter(
-      (entry) =>
-        entry.id !== entryId && !(entry.dayId === targetDayId && entry.slotId === targetSlotId)
-    );
-
-    const movedEntry: TimetableEntry = {
-      ...sourceEntry,
-      dayId: targetDayId,
-      slotId: targetSlotId,
-    };
-
-    onUpdateTimetable({
-      ...timetable,
-      entries: [...remainingEntries, movedEntry],
-      lastEdited: new Date().toISOString(),
-    });
-
-    onSelectCells([movedEntry.id]);
+    draggedEntryIdRef.current = null;
     setDraggedEntryId(null);
+    (window as any).__AIS_ACTIVE_DRAGGED_ENTRY__ = null;
   };
 
   // Helper to check if an entry has a conflict
@@ -682,6 +714,12 @@ export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
                           const conflict = entry ? getConflictForEntry(entry.id) : null;
                           const isDropTarget =
                             dragOverCell?.dayId === day.id && dragOverCell?.slotId === slot.id;
+                          const isDragged = entry && draggedEntryId === entry.id;
+                          const isExchangeTarget =
+                            isDropTarget &&
+                            Boolean(draggedEntryId) &&
+                            Boolean(entry) &&
+                            entry?.id !== draggedEntryId;
 
                           return (
                             <td
@@ -695,7 +733,9 @@ export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
                                 borderColor: timetable.theme.borderColor || '#262626',
                               }}
                               className={`border relative transition-all group ${
-                                isDropTarget
+                                isExchangeTarget
+                                  ? 'bg-amber-500/20 ring-2 ring-inset ring-amber-400'
+                                  : isDropTarget
                                   ? 'bg-[#c5a059]/25 ring-2 ring-inset ring-[#c5a059]'
                                   : isBreakRow
                                   ? 'bg-[#c5a059]/5'
@@ -706,6 +746,18 @@ export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
                                 <div
                                   draggable
                                   onDragStart={(e) => handleDragStart(e, entry.id)}
+                                  onDragEnd={handleDragEnd}
+                                  onDragOver={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    handleDragOver(e, day.id, slot.id);
+                                  }}
+                                  onDragLeave={(e) => handleDragLeave(e, day.id, slot.id)}
+                                  onDrop={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    handleDrop(e, day.id, slot.id);
+                                  }}
                                   onClick={(e) => {
                                     if (e.ctrlKey || e.metaKey || e.shiftKey) {
                                       onSelectCells(
@@ -726,8 +778,9 @@ export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
                                     borderColor: entry.style?.borderColor || 'rgba(255,255,255,0.1)',
                                     borderWidth: '1px',
                                     textAlign: entry.style?.textAlign || 'left',
+                                    opacity: isDragged ? 0.35 : 1,
                                   }}
-                                  className={`w-full h-full p-2.5 flex flex-col justify-between shadow-2xs hover:shadow-md cursor-grab active:cursor-grabbing transition-all relative overflow-hidden ${
+                                  className={`w-full h-full p-2.5 flex flex-col justify-between shadow-2xs hover:shadow-md cursor-grab active:cursor-grabbing transition-all relative overflow-hidden select-none ${
                                     isSelected
                                       ? 'ring-2 ring-[#c5a059] ring-offset-1 ring-offset-[#0a0a0a] shadow-lg scale-[1.01]'
                                       : ''
@@ -740,6 +793,31 @@ export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
                                       className="absolute top-1 right-1 bg-amber-500 text-white rounded-full p-0.5 animate-pulse"
                                     >
                                       <AlertTriangle className="w-2.5 h-2.5" />
+                                    </div>
+                                  )}
+
+                                  {/* Exchange / Swap Target Overlay */}
+                                  {isExchangeTarget && (
+                                    <div
+                                      onDragOver={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        handleDragOver(e, day.id, slot.id);
+                                      }}
+                                      onDrop={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        handleDrop(e, day.id, slot.id);
+                                      }}
+                                      className="absolute inset-0 bg-black/85 backdrop-blur-2xs z-30 flex flex-col items-center justify-center p-1 text-center animate-in fade-in zoom-in-95 duration-100 cursor-pointer pointer-events-auto"
+                                    >
+                                      <div className="flex items-center gap-1.5 text-amber-400 font-bold text-xs">
+                                        <ArrowLeftRight className="w-4 h-4 animate-pulse text-amber-400 shrink-0" />
+                                        <span>Exchange / Swap</span>
+                                      </div>
+                                      <span className="text-[10px] text-amber-200/95 font-medium truncate max-w-full px-1 mt-0.5">
+                                        Drop to swap with {draggedEntry?.title || 'Subject'}
+                                      </span>
                                     </div>
                                   )}
 
@@ -783,12 +861,20 @@ export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
                                   </div>
                                 </div>
                               ) : (
-                                /* Empty Slot -> Add Button on hover */
+                                /* Empty Slot -> Add Button on hover or Drop target */
                                 <div
                                   onClick={() => onAddSubjectToSlot(day.id, slot.id)}
-                                  className="w-full h-full rounded-lg border border-dashed border-transparent hover:border-[#3a3a3a] flex items-center justify-center text-[#555555] hover:text-[#c5a059] hover:bg-[#c5a059]/5 cursor-pointer transition-all group/btn"
+                                  className={`w-full h-full rounded-lg border border-dashed flex items-center justify-center cursor-pointer transition-all group/btn ${
+                                    isDropTarget && draggedEntryId
+                                      ? 'border-[#c5a059] bg-[#c5a059]/15 text-[#c5a059]'
+                                      : 'border-transparent hover:border-[#3a3a3a] text-[#555555] hover:text-[#c5a059] hover:bg-[#c5a059]/5'
+                                  }`}
                                 >
-                                  <Plus className="w-4 h-4 opacity-0 group-hover/btn:opacity-100 transition-opacity" />
+                                  {isDropTarget && draggedEntryId ? (
+                                    <span className="text-[10px] font-bold tracking-wide">Drop to Move</span>
+                                  ) : (
+                                    <Plus className="w-4 h-4 opacity-0 group-hover/btn:opacity-100 transition-opacity" />
+                                  )}
                                 </div>
                               )}
                             </td>
@@ -878,6 +964,12 @@ export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
                     entriesInSlot.length > 0 ? entriesInSlot[entriesInSlot.length - 1] : undefined;
                   const isDropTarget =
                     dragOverCell?.dayId === activeDailyDayId && dragOverCell?.slotId === slot.id;
+                  const isDragged = entry && draggedEntryId === entry.id;
+                  const isExchangeTarget =
+                    isDropTarget &&
+                    Boolean(draggedEntryId) &&
+                    Boolean(entry) &&
+                    entry?.id !== draggedEntryId;
 
                   return (
                     <div
@@ -885,8 +977,10 @@ export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
                       onDragOver={(e) => handleDragOver(e, activeDailyDayId, slot.id)}
                       onDragLeave={(e) => handleDragLeave(e, activeDailyDayId, slot.id)}
                       onDrop={(e) => handleDrop(e, activeDailyDayId, slot.id)}
-                      className={`flex items-start gap-4 p-3 rounded-xl border transition-all ${
-                        isDropTarget
+                      className={`flex items-start gap-4 p-3 rounded-xl border transition-all relative ${
+                        isExchangeTarget
+                          ? 'border-amber-400 bg-amber-500/20 ring-2 ring-amber-400'
+                          : isDropTarget
                           ? 'border-[#c5a059] bg-[#c5a059]/20 ring-2 ring-[#c5a059]'
                           : 'border-[#262626] hover:border-[#333333] bg-[#141414]'
                       }`}
@@ -975,15 +1069,50 @@ export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
                           <div
                             draggable
                             onDragStart={(e) => handleDragStart(e, entry.id)}
+                            onDragEnd={handleDragEnd}
+                            onDragOver={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              handleDragOver(e, activeDailyDayId, slot.id);
+                            }}
+                            onDragLeave={(e) => handleDragLeave(e, activeDailyDayId, slot.id)}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              handleDrop(e, activeDailyDayId, slot.id);
+                            }}
                             onClick={() => onSelectCells([entry.id])}
                             onDoubleClick={() => onOpenQuickEdit(entry)}
                             style={{
                               backgroundColor: entry.style?.background || entry.color,
                               color: entry.style?.textColor || entry.textColor || '#0f172a',
                               borderRadius: `${timetable.theme.borderRadius}px`,
+                              opacity: isDragged ? 0.35 : 1,
                             }}
-                            className="p-3 shadow-xs rounded-xl flex items-center justify-between cursor-grab active:cursor-grabbing"
+                            className="p-3 shadow-xs rounded-xl flex items-center justify-between cursor-grab active:cursor-grabbing relative overflow-hidden select-none"
                           >
+                            {/* Exchange / Swap Target Overlay */}
+                            {isExchangeTarget && (
+                              <div
+                                onDragOver={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  handleDragOver(e, activeDailyDayId, slot.id);
+                                }}
+                                onDrop={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  handleDrop(e, activeDailyDayId, slot.id);
+                                }}
+                                className="absolute inset-0 bg-black/85 backdrop-blur-2xs z-30 flex items-center justify-center p-2 text-center rounded-xl animate-in fade-in zoom-in-95 duration-100 cursor-pointer pointer-events-auto"
+                              >
+                                <div className="flex items-center gap-2 text-amber-400 font-bold text-xs">
+                                  <ArrowLeftRight className="w-4 h-4 animate-pulse text-amber-400 shrink-0" />
+                                  <span>Drop to swap with {draggedEntry?.title || 'Subject'}</span>
+                                </div>
+                              </div>
+                            )}
+
                             <div className="flex items-center gap-3">
                               {entry.icon && (
                                 <div className="p-2 rounded-lg bg-black/20 shadow-2xs">
@@ -1022,10 +1151,20 @@ export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
                         ) : (
                           <button
                             onClick={() => onAddSubjectToSlot(activeDailyDayId, slot.id)}
-                            className="w-full py-2.5 rounded-xl border border-dashed border-[#2e2e2e] hover:border-[#c5a059] hover:bg-[#c5a059]/10 text-[#737373] hover:text-[#c5a059] text-xs font-semibold flex items-center justify-center gap-1.5 transition-all"
+                            className={`w-full py-2.5 rounded-xl border border-dashed text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
+                              isDropTarget && draggedEntryId
+                                ? 'border-[#c5a059] bg-[#c5a059]/15 text-[#c5a059]'
+                                : 'border-[#2e2e2e] hover:border-[#c5a059] hover:bg-[#c5a059]/10 text-[#737373] hover:text-[#c5a059]'
+                            }`}
                           >
-                            <Plus className="w-3.5 h-3.5" />
-                            Add or Drop Subject to {slot.name}
+                            {isDropTarget && draggedEntryId ? (
+                              <span className="font-bold">Drop to Move Subject here</span>
+                            ) : (
+                              <>
+                                <Plus className="w-3.5 h-3.5" />
+                                Add or Drop Subject to {slot.name}
+                              </>
+                            )}
                           </button>
                         )}
                       </div>
@@ -1084,6 +1223,12 @@ export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
                             : undefined;
                         const isDropTarget =
                           dragOverCell?.dayId === day.id && dragOverCell?.slotId === slot.id;
+                        const isDragged = entry && draggedEntryId === entry.id;
+                        const isExchangeTarget =
+                          isDropTarget &&
+                          Boolean(draggedEntryId) &&
+                          Boolean(entry) &&
+                          entry?.id !== draggedEntryId;
 
                         return (
                           <div
@@ -1091,8 +1236,10 @@ export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
                             onDragOver={(e) => handleDragOver(e, day.id, slot.id)}
                             onDragLeave={(e) => handleDragLeave(e, day.id, slot.id)}
                             onDrop={(e) => handleDrop(e, day.id, slot.id)}
-                            className={`p-2.5 rounded-xl border shadow-2xs flex flex-col justify-between transition-all ${
-                              isDropTarget
+                            className={`p-2.5 rounded-xl border shadow-2xs flex flex-col justify-between transition-all relative ${
+                              isExchangeTarget
+                                ? 'border-amber-400 bg-amber-500/20 ring-2 ring-amber-400'
+                                : isDropTarget
                                 ? 'border-[#c5a059] bg-[#c5a059]/20 ring-2 ring-[#c5a059]'
                                 : 'border-[#262626] bg-[#181818]'
                             }`}
@@ -1108,14 +1255,51 @@ export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
                               <div
                                 draggable
                                 onDragStart={(e) => handleDragStart(e, entry.id)}
+                                onDragEnd={handleDragEnd}
+                                onDragOver={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  handleDragOver(e, day.id, slot.id);
+                                }}
+                                onDragLeave={(e) => handleDragLeave(e, day.id, slot.id)}
+                                onDrop={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  handleDrop(e, day.id, slot.id);
+                                }}
                                 onClick={() => onSelectCells([entry.id])}
                                 style={{
                                   backgroundColor: entry.style?.background || entry.color,
                                   color: entry.style?.textColor || entry.textColor || '#0f172a',
                                   borderRadius: `${timetable.theme.borderRadius}px`,
+                                  opacity: isDragged ? 0.35 : 1,
                                 }}
-                                className="p-2 rounded-lg cursor-grab active:cursor-grabbing flex-1"
+                                className="p-2 rounded-lg cursor-grab active:cursor-grabbing flex-1 relative overflow-hidden select-none"
                               >
+                                {/* Exchange / Swap Target Overlay */}
+                                {isExchangeTarget && (
+                                  <div
+                                    onDragOver={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      handleDragOver(e, day.id, slot.id);
+                                    }}
+                                    onDrop={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      handleDrop(e, day.id, slot.id);
+                                    }}
+                                    className="absolute inset-0 bg-black/85 backdrop-blur-2xs z-30 flex flex-col items-center justify-center p-1 text-center animate-in fade-in zoom-in-95 duration-100 cursor-pointer pointer-events-auto"
+                                  >
+                                    <div className="flex items-center gap-1 text-amber-400 font-bold text-xs">
+                                      <ArrowLeftRight className="w-3.5 h-3.5 animate-pulse text-amber-400" />
+                                      <span>Exchange / Swap</span>
+                                    </div>
+                                    <span className="text-[10px] text-amber-200 font-medium truncate max-w-full px-1">
+                                      Drop to swap with {draggedEntry?.title || 'Subject'}
+                                    </span>
+                                  </div>
+                                )}
                                 <span className="font-semibold text-xs block truncate">{entry.title}</span>
                                 <div className="flex items-center justify-between text-[10px] opacity-75 mt-1">
                                   <span>{entry.teacher}</span>
@@ -1125,10 +1309,20 @@ export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
                             ) : (
                               <button
                                 onClick={() => onAddSubjectToSlot(day.id, slot.id)}
-                                className="py-2 text-[11px] text-[#737373] hover:text-[#c5a059] hover:bg-[#c5a059]/10 rounded-lg flex items-center justify-center gap-1 border border-dashed border-[#2e2e2e]"
+                                className={`py-2 text-[11px] rounded-lg flex items-center justify-center gap-1 border border-dashed transition-all ${
+                                  isDropTarget && draggedEntryId
+                                    ? 'border-[#c5a059] bg-[#c5a059]/15 text-[#c5a059] font-bold'
+                                    : 'text-[#737373] hover:text-[#c5a059] hover:bg-[#c5a059]/10 border-[#2e2e2e]'
+                                }`}
                               >
-                                <Plus className="w-3 h-3" />
-                                Empty (Drop Here)
+                                {isDropTarget && draggedEntryId ? (
+                                  <span>Drop to Move</span>
+                                ) : (
+                                  <>
+                                    <Plus className="w-3 h-3" />
+                                    Empty (Drop Here)
+                                  </>
+                                )}
                               </button>
                             )}
                           </div>
@@ -1161,13 +1355,31 @@ export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
                     <div className="mt-2 space-y-1.5 flex-1">
                       {timetable.timeSlots.map((slot) => {
                         const entry = dayEntries.find((e) => e.slotId === slot.id);
+                        const isDropTarget =
+                          dragOverCell?.dayId === day.id && dragOverCell?.slotId === slot.id;
+                        const isDragged = entry && draggedEntryId === entry.id;
+                        const isExchangeTarget =
+                          isDropTarget &&
+                          Boolean(draggedEntryId) &&
+                          Boolean(entry) &&
+                          entry?.id !== draggedEntryId;
 
                         return (
                           <div
                             key={slot.id}
-                            className={`p-1.5 rounded-md text-[11px] transition-colors ${
-                              entry
-                                ? 'shadow-2xs cursor-pointer'
+                            onDragOver={(e) => handleDragOver(e, day.id, slot.id)}
+                            onDragLeave={(e) => handleDragLeave(e, day.id, slot.id)}
+                            onDrop={(e) => handleDrop(e, day.id, slot.id)}
+                            draggable={Boolean(entry)}
+                            onDragStart={(e) => entry && handleDragStart(e, entry.id)}
+                            onDragEnd={handleDragEnd}
+                            className={`p-1.5 rounded-md text-[11px] transition-colors relative overflow-hidden select-none ${
+                              isExchangeTarget
+                                ? 'ring-2 ring-amber-400 bg-amber-500/30'
+                                : isDropTarget
+                                ? 'ring-2 ring-[#c5a059] bg-[#c5a059]/20'
+                                : entry
+                                ? 'shadow-2xs cursor-grab active:cursor-grabbing'
                                 : 'text-[#737373] hover:bg-[#1a1a1a] border border-dashed border-[#262626]'
                             }`}
                             style={
@@ -1175,6 +1387,7 @@ export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
                                 ? {
                                     backgroundColor: entry.color,
                                     color: entry.textColor || '#0f172a',
+                                    opacity: isDragged ? 0.35 : 1,
                                   }
                                 : {}
                             }
@@ -1183,6 +1396,26 @@ export const TimetableCanvas: React.FC<TimetableCanvasProps> = ({
                               else onAddSubjectToSlot(day.id, slot.id);
                             }}
                           >
+                            {isExchangeTarget && (
+                              <div
+                                onDragOver={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  handleDragOver(e, day.id, slot.id);
+                                }}
+                                onDrop={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  handleDrop(e, day.id, slot.id);
+                                }}
+                                className="absolute inset-0 bg-black/85 backdrop-blur-2xs z-30 flex items-center justify-center p-1 text-center animate-in fade-in duration-100 cursor-pointer pointer-events-auto"
+                              >
+                                <span className="text-[9px] text-amber-400 font-bold flex items-center gap-1">
+                                  <ArrowLeftRight className="w-2.5 h-2.5" />
+                                  Drop to Swap
+                                </span>
+                              </div>
+                            )}
                             <div className="font-medium truncate">{entry ? entry.title : `+ ${slot.name}`}</div>
                             {entry && entry.room && (
                               <div className="text-[9px] opacity-75 truncate">{entry.room}</div>

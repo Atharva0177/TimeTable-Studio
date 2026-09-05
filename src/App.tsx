@@ -22,7 +22,7 @@ import { QuickEditModal } from './components/QuickEditModal';
 import { PrintModal } from './components/PrintModal';
 import { CopyDayModal } from './components/CopyDayModal';
 import { ExportTimetableTarget } from './components/ExportTimetableTarget';
-import { copyDayTimetable } from './utils/timetableOperations';
+import { copyDayTimetable, swapTwoEntries } from './utils/timetableOperations';
 import {
   Palette,
   SlidersHorizontal,
@@ -87,6 +87,13 @@ export default function App() {
   const [isLeftPanelCollapsed, setIsLeftPanelCollapsed] = useState(false);
   const [isRightPanelCollapsed, setIsRightPanelCollapsed] = useState(false);
   const [downloadToast, setDownloadToast] = useState<string | null>(null);
+
+  const showToast = useCallback((msg: string) => {
+    setDownloadToast(msg);
+    setTimeout(() => {
+      setDownloadToast((current) => (current === msg ? null : current));
+    }, 3000);
+  }, []);
 
   // Modals state
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -266,6 +273,20 @@ export default function App() {
       lastEdited: new Date().toISOString(),
     });
   };
+
+  // Swap the 2 selected entries
+  const handleSwapSelectedEntries = useCallback(() => {
+    if (selectedCellIds.length !== 2) return;
+    const [idA, idB] = selectedCellIds;
+    const entryA = activeTimetable.entries.find((e) => e.id === idA);
+    const entryB = activeTimetable.entries.find((e) => e.id === idB);
+    if (!entryA || !entryB) return;
+
+    const swapped = swapTwoEntries(activeTimetable, idA, idB);
+    handleUpdateActiveTimetable(swapped);
+    setDownloadToast(`⇄ Exchanged "${entryA.title}" with "${entryB.title}"`);
+    setTimeout(() => setDownloadToast(null), 3500);
+  }, [selectedCellIds, activeTimetable, handleUpdateActiveTimetable]);
 
   // Copy single day timetable to next day
   const handleOpenCopyDayModal = useCallback(
@@ -603,6 +624,7 @@ export default function App() {
             isRightPanelCollapsed={isRightPanelCollapsed}
             onToggleRightPanel={() => setIsRightPanelCollapsed((v) => !v)}
             onOpenCopyDay={() => handleOpenCopyDayModal()}
+            onSwapSelected={selectedCellIds.length === 2 ? handleSwapSelectedEntries : undefined}
           />
 
           {/* 3-Panel Design Studio Workspace (Responsive: Sidebars on desktop, Bottom Dock + Drawers on mobile) */}
@@ -676,6 +698,7 @@ export default function App() {
                 onAddRow={handleAddRow}
                 onMoveRow={handleMoveRow}
                 onOpenCopyDay={handleOpenCopyDayModal}
+                onShowToast={showToast}
               />
             </div>
 
